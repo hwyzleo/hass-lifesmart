@@ -1,0 +1,11 @@
+{
+  "domain": "lifesmart",
+  "name": "hass-lifesmart",
+  "documentation": "https://github.com/hwyzleo/hass-lifesmart",
+  "requirements": [],
+  "dependencies": [],
+  "codeowners": [
+    "@hwyzleo"
+  ],
+  "version": "25.02.20"
+}
