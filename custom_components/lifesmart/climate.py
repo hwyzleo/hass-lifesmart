@@ -1,5 +1,6 @@
 import logging
 import time
+
 from homeassistant.components.climate import ENTITY_ID_FORMAT, ClimateEntity
 from homeassistant.components.climate.const import (
     HVAC_MODE_AUTO,
@@ -12,12 +13,16 @@ from homeassistant.components.climate.const import (
     HVAC_MODE_OFF,
 )
 from homeassistant.const import (
-    ATTR_TEMPERATURE,
     PRECISION_WHOLE,
     TEMP_CELSIUS,
-    TEMP_FAHRENHEIT,
 )
-from . import LifeSmartDevice
+
+from . import (
+    DOMAIN,
+    DEVICES,
+    CLIMATE_TYPES,
+    LifeSmartDevice
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,28 +61,38 @@ THER_TYPES = ["SL_CP_DN"]
 LIFESMART_STATE_LIST = []
 
 
-def setup_platform(hass, config, add_entities, discovery_info=None):
-    if discovery_info is None:
-        return
-    devices = []
-    dev = discovery_info.get("dev")
-    param = discovery_info.get("param")
-    devices = []
-    if "T" not in dev['data'] and "P3" not in dev['data']:
-        return
-    devices.append(LifeSmartClimateDevice(dev, "idx", "0", param))
-    add_entities(devices)
+async def async_setup_entry(hass, config_entry, async_add_entities):
+    """通过配置入口设置空调平台"""
+    param = hass.data[DOMAIN][config_entry.entry_id]
+    exclude_items = param["exclude"]
+
+    # 从 Lifesmart 获取设备列表
+    devices = hass.data[DOMAIN][DEVICES]
+
+    # 过滤设备并创建实体
+    climates = []
+    for dev in devices:
+        if dev["me"] in exclude_items:
+            continue
+        devtype = dev["devtype"]
+        if devtype in CLIMATE_TYPES:
+            if "T" not in dev['data'] and "P3" not in dev['data']:
+                continue
+            devices.append(LifeSmartClimate(dev, "idx", "0", param))
+
+    async_add_entities(climates, True)
 
 
-class LifeSmartClimateDevice(LifeSmartDevice, ClimateEntity):
+class LifeSmartClimate(LifeSmartDevice, ClimateEntity):
+    """LifeSmart空净实体"""
 
     def __init__(self, dev, idx, val, param):
-        """Init LifeSmart cover device."""
         super().__init__(dev, idx, val, param)
         self._name = dev['name']
         cdata = dev['data']
         self.entity_id = ENTITY_ID_FORMAT.format(
             (dev['devtype'] + "_" + dev['agt'] + "_" + dev['me']).lower().replace(":", "_").replace("@", "_"))
+        self._attr_unique_id = self.entity_id
         if dev['devtype'] in AIR_TYPES:
             self._modes = LIFESMART_STATE_LIST
             if cdata['O']['type'] % 2 == 0:

@@ -1,30 +1,23 @@
-import subprocess
-import urllib.request
-import json
-import time
+import asyncio
 import datetime
 import hashlib
+import json
 import logging
-import threading
-import websocket
-import asyncio
-
-import voluptuous as vol
 import sys
+import threading
+import time
+import urllib.request
+
+import websocket
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 
 sys.setrecursionlimit(100000)
 
-from homeassistant.const import (
-    CONF_FRIENDLY_NAME,
-)
 from homeassistant.components.climate.const import HVACMode
 
-from homeassistant.core import callback
-from homeassistant.helpers import discovery
-import homeassistant.helpers.config_validation as cv
-from homeassistant.helpers.entity import Entity
-from homeassistant.helpers.event import async_track_point_in_utc_time
-from homeassistant.util.dt import utcnow
+from homeassistant.helpers.entity import Entity, DeviceInfo
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,75 +26,36 @@ SPEED_LOW = "Speed_Low"
 SPEED_MEDIUM = "Speed_Medium"
 SPEED_HIGH = "Speed_High"
 
+"""配置参数 Key"""
+CONF_LIFESMART_USERNAME = "username"
+CONF_LIFESMART_PASSWORD = "password"
 CONF_LIFESMART_APPKEY = "appkey"
 CONF_LIFESMART_APPTOKEN = "apptoken"
 CONF_LIFESMART_USERTOKEN = "usertoken"
 CONF_LIFESMART_USERID = "userid"
 CONF_EXCLUDE_ITEMS = "exclude"
-CONF_LIFESMART_USERNAME = "username"
-CONF_LIFESMART_PASSWORD = "password"
 
-# 开关
+"""开关类型"""
 SWITCH_TYPES = [
-    "SL_SF_RC",
-    "SL_SW_RC",
-    "SL_SW_IF3",
-    "SL_SF_IF3",
-    "SL_SW_CP3",
-    "SL_SW_RC3",
-    "SL_SW_IF2",
-    "SL_SF_IF2",
-    "SL_SW_CP2",
-    "SL_SW_FE2",
-    "SL_SW_RC2",
-    "SL_SW_ND2",
-    "SL_MC_ND2",
-    "SL_SW_IF1",
-    "SL_SW_IF2",
-    "SL_SF_IF1",
-    "SL_SW_CP1",
-    "SL_SW_FE1",
-    "SL_OL_W",
-    "SL_SW_RC1",
-    "SL_SW_ND1",
-    "SL_MC_ND1",
-    "SL_SW_ND3",
-    "SL_MC_ND3",
-    "SL_SW_ND2",
-    "SL_MC_ND2",
-    "SL_SW_ND1",
-    "SL_MC_ND1",
-    "SL_S",
-    "SL_SPWM",
-    "SL_P_SW",
-    "SL_SW_DM1",
-    "SL_SW_MJ2",
-    "SL_SW_MJ1",
-    "SL_OL",
-    "SL_OL_3C",
-    "SL_OL_DE",
-    "SL_OL_UK",
-    "SL_OL_UL",
     "OD_WE_OT1",
+    "SL_MC_ND1", "SL_MC_ND2",
     "SL_NATURE",
-    "SL_SC_BB"
+    "SL_OL", "SL_OL_3C", "SL_OL_DE", "SL_OL_UK", "SL_OL_UL", "SL_OL_W",
+    "SL_P_SW",
+    "SL_S",
+    "SL_SC_BB",
+    "SL_SF_RC",
+    "SL_SF_IF1", "SL_SF_IF2", "SL_SF_IF3",
+    "SL_SW_CP1", "SL_SW_CP2", "SL_SW_CP3",
+    "SL_SW_DM1",
+    "SL_SW_FE1", "SL_SW_FE2",
+    "SL_SW_IF1", "SL_SW_IF2", "SL_SW_IF3",
+    "SL_SW_MJ1", "SL_SW_MJ2",
+    "SL_SW_ND1", "SL_SW_ND2", "SL_MC_ND3",
+    "SL_SW_RC", "SL_SW_RC1", "SL_SW_RC2", "SL_SW_RC3",
+    "SL_SPWM",
 ]
-# 灯
-LIGHT_TYPES = [
-    "SL_OL_W",
-    "SL_SW_IF1",
-    "SL_SW_IF3",
-    "SL_CT_RGBW"
-]
-QUANTUM_TYPES = [
-    "OD_WE_QUAN"
-]
-SPOT_TYPES = [
-    "MSL_IRCTL",
-    "OD_WE_IRCTL",
-    "SL_SPOT"
-]
-# 传感器
+"""传感器类型"""
 BINARY_SENSOR_TYPES = [
     "SL_SC_G",
     "SL_SC_BG",
@@ -110,18 +64,41 @@ BINARY_SENSOR_TYPES = [
     "SL_SC_CM",
     "SL_P_A"
 ]
-# 窗帘
+"""窗帘类型"""
 COVER_TYPES = [
     "SL_DOOYA",
     "SL_SW_WIN"
 ]
-# 气体传感器
+"""灯类型"""
+LIGHT_TYPES = [
+    "SL_OL_W",
+    "SL_SW_IF1", "SL_SW_IF3",  # 开关带有背光灯
+    "SL_CT_RGBW"
+]
+"""空净类型"""
+CLIMATE_TYPES = [
+    "V_AIR_P",
+    "SL_CP_DN",
+    "OD_MFRESH_M8088"
+]
+"""量子类型"""
+QUANTUM_TYPES = [
+    "OD_WE_QUAN"
+]
+"""控制器类型"""
+SPOT_TYPES = [
+    "MSL_IRCTL",
+    "OD_WE_IRCTL",
+    "SL_SPOT"
+]
+"""气体传感器类型"""
 GAS_SENSOR_TYPES = [
     "SL_SC_WA ",
     "SL_SC_CH",
     "SL_SC_CP",
     "ELIQ_EM"
 ]
+"""环境传感器类型"""
 EV_SENSOR_TYPES = [
     "SL_SC_THL",
     "SL_SC_BE",
@@ -133,7 +110,22 @@ OT_SENSOR_TYPES = [
     "SL_SC_G",
     "SL_SC_BG"
 ]
-# 锁
+"""守卫传感器类型"""
+GUARD_SENSOR_TYPES = [
+    "SL_SC_G",
+    "SL_SC_BG"
+]
+"""运动传感器类型"""
+MOTION_SENSOR_TYPES = [
+    "SL_SC_MHW",
+    "SL_SC_BM",
+    "SL_SC_CM"
+]
+"""烟雾传感器类型"""
+SMOKE_SENSOR_TYPES = [
+    "SL_P_A"
+]
+"""锁类型"""
 LOCK_TYPES = [
     "SL_LK_LS",
     "SL_LK_GTM",
@@ -141,6 +133,7 @@ LOCK_TYPES = [
     "SL_LK_SG",
     "SL_LK_YL"
 ]
+
 LIFESMART_STATE_LIST = [
     HVACMode.OFF,
     HVACMode.AUTO,
@@ -149,30 +142,42 @@ LIFESMART_STATE_LIST = [
     HVACMode.HEAT,
     HVACMode.DRY
 ]
-# 空净
-CLIMATE_TYPES = [
-    "V_AIR_P",
-    "SL_CP_DN",
-    "OD_MFRESH_M8088"
-]
 
 ENTITY_ID = 'entity_id'
 DOMAIN = 'lifesmart'
+DEVICES = 'devices'
 LIFESMART_STATE_MANAGER = 'lifesmart_wss'
 
 
 def request_lifesmart(path, payload):
-    """
-    请求 lifesmart
-    :param path: 接口地址
-    :param payload: 请求内容
-    :return: 响应结果
-    """
+    """请求 lifesmart（增加异常处理和日志）"""
     base = "https://api.ilifesmart.com/app"
     whole_url = base + path
     headers = {'Content-Type': 'application/json'}
-    req = urllib.request.Request(url=whole_url, data=payload.encode('utf-8'), headers=headers, method='POST')
-    return json.loads(urllib.request.urlopen(req).read().decode('utf-8'))
+
+    try:
+        req = urllib.request.Request(
+            url=whole_url,
+            data=payload.encode('utf-8'),
+            headers=headers,
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=10) as response:
+            response_data = response.read().decode('utf-8')
+            # _LOGGER.warning("API Response: %s", response_data)  # 记录原始响应
+            return json.loads(response_data)
+    except urllib.error.HTTPError as e:
+        _LOGGER.error("HTTP Error %s: %s", e.code, e.reason)
+        _LOGGER.error("Request URL: %s", whole_url)
+        _LOGGER.error("Request Payload: %s", payload)
+        return {"code": -1, "message": f"HTTP Error {e.code}"}
+    except json.JSONDecodeError as e:
+        _LOGGER.error("JSON Decode Error: %s", e)
+        _LOGGER.error("Response Data: %s", response_data)
+        return {"code": -1, "message": "Invalid JSON response"}
+    except Exception as e:
+        _LOGGER.error("Unexpected Error: %s", str(e))
+        return {"code": -1, "message": str(e)}
 
 
 def login_lifesmart(username, password, appkey):
@@ -256,6 +261,7 @@ def get_all_devices_from_lifesmart(appkey, apptoken, usertoken, userid):
 def send_keys_to_lifesmart(appkey, apptoken, usertoken, userid, agt, me, category, brand, ai, keys):
     """
     发送普通指令
+
     :param appkey: 应用 Key
     :param apptoken: 应用令牌
     :param usertoken: 用户令牌
@@ -305,6 +311,7 @@ def send_ac_keys_to_lifesmart(appkey, apptoken, usertoken, userid, agt, me, cate
                               temp, wind, swing):
     """
     发送空调指令
+
     :param appkey: 应用 Key
     :param apptoken: 应用令牌
     :param usertoken: 用户令牌
@@ -361,53 +368,88 @@ def send_ac_keys_to_lifesmart(appkey, apptoken, usertoken, userid, agt, me, cate
     return response
 
 
-def setup(hass, config):
-    """初始化参数"""
-    param = {
-        'appkey': config[DOMAIN][CONF_LIFESMART_APPKEY],
-        'apptoken': config[DOMAIN][CONF_LIFESMART_APPTOKEN],
-        'username': config[DOMAIN][CONF_LIFESMART_USERNAME],
-        'password': config[DOMAIN][CONF_LIFESMART_PASSWORD]
-    }
-    login_res = login_lifesmart(param['username'], param['password'], param['appkey'])
-    param['token'] = login_res['token']
-    param['userid'] = login_res['userid']
-    auth_res = auth_lifesmart(param['userid'], param['token'], param['appkey'])
-    param['usertoken'] = auth_res['usertoken']
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """配置入口初始化"""
+    hass.data.setdefault(DOMAIN, {})
 
-    """获取设备"""
-    exclude_items = config[DOMAIN][CONF_EXCLUDE_ITEMS]
-    devices = get_all_devices_from_lifesmart(param['appkey'], param['apptoken'], param['usertoken'], param['userid'])
-    # _LOGGER.warning("lifesmart devices: %s", str(devices))
-    for dev in devices:
-        if dev['me'] in exclude_items:
-            continue
-        devtype = dev['devtype']
-        dev['agt'] = dev['agt'].replace("_", "")
-        if devtype in SWITCH_TYPES:
-            discovery.load_platform(hass, "switch", DOMAIN, {"dev": dev, "param": param}, config)
-        elif devtype in BINARY_SENSOR_TYPES:
-            discovery.load_platform(hass, "binary_sensor", DOMAIN, {"dev": dev, "param": param}, config)
-        elif devtype in COVER_TYPES:
-            discovery.load_platform(hass, "cover", DOMAIN, {"dev": dev, "param": param}, config)
-        elif devtype in SPOT_TYPES:
-            discovery.load_platform(hass, "light", DOMAIN, {"dev": dev, "param": param}, config)
-        elif devtype in CLIMATE_TYPES:
-            discovery.load_platform(hass, "climate", DOMAIN, {"dev": dev, "param": param}, config)
-        elif devtype in GAS_SENSOR_TYPES or devtype in EV_SENSOR_TYPES:
-            discovery.load_platform(hass, "sensor", DOMAIN, {"dev": dev, "param": param}, config)
-        if devtype in OT_SENSOR_TYPES:
-            discovery.load_platform(hass, "sensor", DOMAIN, {"dev": dev, "param": param}, config)
-        if devtype in LIGHT_TYPES:
-            discovery.load_platform(hass, "light", DOMAIN, {"dev": dev, "param": param}, config)
+    # 将配置数据存储在 hass.data 中
+    param = {
+        "appkey": entry.data[CONF_LIFESMART_APPKEY],
+        "apptoken": entry.data[CONF_LIFESMART_APPTOKEN],
+        "username": entry.data[CONF_LIFESMART_USERNAME],
+        "password": entry.data[CONF_LIFESMART_PASSWORD],
+        "exclude": entry.options.get(CONF_EXCLUDE_ITEMS, []),
+    }
+
+    # _LOGGER.warning("Config entry params: %s", param)
+
+    # 登录并获取 token
+    login_res = await hass.async_add_executor_job(
+        login_lifesmart,
+        param["username"],
+        param["password"],
+        param["appkey"],
+    )
+    if not login_res:
+        # 失败重试一次
+        login_res = await hass.async_add_executor_job(
+            login_lifesmart,
+            param["username"],
+            param["password"],
+            param["appkey"],
+        )
+    if not login_res or login_res.get("code") != "success":
+        _LOGGER.error("Login failed")
+        return False
+
+    param["token"] = login_res["token"]
+    param["userid"] = login_res["userid"]
+
+    # 授权获取 usertoken
+    auth_res = await hass.async_add_executor_job(
+        auth_lifesmart,
+        param["userid"],
+        param["token"],
+        param["appkey"],
+    )
+    if not auth_res or auth_res.get("code") != "success":
+        _LOGGER.error("Auth failed")
+        return False
+
+    param["usertoken"] = auth_res["usertoken"]
+
+    # 存储配置参数
+    hass.data[DOMAIN][entry.entry_id] = param
+
+    # 从 Lifesmart 获取设备列表
+    devices = await hass.async_add_executor_job(
+        get_all_devices_from_lifesmart,
+        param["appkey"],
+        param["apptoken"],
+        param["usertoken"],
+        param["userid"],
+    )
+
+    # 注册设备
+    device_registry = dr.async_get(hass)
+    # 删除已有设备（异步方式）
+    await _async_delete_existing_devices(hass, device_registry, entry)
+
+    hass.data[DOMAIN][DEVICES] = devices
+
+    # 加载所有平台
+    platforms = ["switch", "light", "cover", "sensor", "binary_sensor"]
+    for platform in platforms:
+        # await hass.config_entries.async_forward_entry_unload(entry, platform)
+        await hass.config_entries.async_forward_entry_setup(entry, platform)
 
     def send_keys(call):
-        agt = call.data['agt']
-        me = call.data['me']
-        category = call.data['category']
-        brand = call.data['brand']
-        ai = call.data['ai']
-        keys = call.data['keys']
+        agt = call.data.get('agt')
+        me = call.data.get('me')
+        category = call.data.get('category')
+        brand = call.data.get('brand')
+        ai = call.data.get('ai')
+        keys = call.data.get('keys')
         restkey = send_keys_to_lifesmart(param['appkey'], param['apptoken'], param['usertoken'], param['userid'], agt,
                                          me, category, brand, ai, keys)
         # _LOGGER.debug("sendkey: %s", str(restkey))
@@ -439,7 +481,7 @@ def setup(hass, config):
         return fanmode
 
     async def set_event(msg):
-        if msg['msg']['idx'] != "s" and msg['msg']['me'] not in exclude_items:
+        if msg['msg']['idx'] != "s" and msg['msg']['me'] not in param[CONF_EXCLUDE_ITEMS]:
             devtype = msg['msg']['devtype']
             agt = msg['msg']['agt'].replace("_", "")
             if devtype in SWITCH_TYPES and msg['msg']['idx'] in ["L1", "L2", "L3", "P1", "P2", "P3"]:
@@ -605,8 +647,18 @@ def setup(hass, config):
         ws.send(send_data)
         _LOGGER.debug("lifesmart websocket sending_data...")
 
-    hass.services.register(DOMAIN, 'send_keys', send_keys)
-    hass.services.register(DOMAIN, 'send_ackeys', send_ac_keys)
+    try:
+        if not hass.services.has_service(DOMAIN, 'send_keys'):
+            hass.services.async_register(DOMAIN, 'send_keys', send_keys)
+    except Exception as e:
+        _LOGGER.error("Failed to register service 'send_keys': %s", str(e))
+        _LOGGER.error("send_keys function: %s", send_keys)
+    try:
+        if not hass.services.has_service(DOMAIN, 'send_ackeys'):
+            hass.services.async_register(DOMAIN, 'send_ackeys', send_ac_keys)
+    except Exception as e:
+        _LOGGER.error("Failed to register service 'send_ackeys': %s", str(e))
+        _LOGGER.error("send_ackeys function: %s", send_ac_keys)
     ws = websocket.WebSocketApp("wss://api.ilifesmart.com:8443/wsapp/",
                                 on_message=on_message,
                                 on_error=on_error,
@@ -614,25 +666,57 @@ def setup(hass, config):
     ws.on_open = on_open
     hass.data[LIFESMART_STATE_MANAGER] = LifeSmartStatesManager(ws=ws)
     hass.data[LIFESMART_STATE_MANAGER].start_keep_alive()
+
     return True
 
 
+async def _async_delete_existing_devices(hass, device_registry, config_entry):
+    # 遍历所有设备并删除属于当前集成的设备
+    # 使用异步方式遍历设备注册表
+    for device in list(device_registry.devices.values()):
+        if config_entry.entry_id in device.config_entries:
+            device_registry.async_remove_device(device.id)
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """卸载配置入口"""
+    hass.services.async_remove(DOMAIN, 'send_keys')
+    hass.services.async_remove(DOMAIN, 'send_ackeys')
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, ["switch", "light", "sensor", "climate"])
+    if unload_ok:
+        hass.data[DOMAIN].pop(entry.entry_id)
+    return unload_ok
+
+
 class LifeSmartDevice(Entity):
-    """LifeSmart base device."""
+    """LifeSmart实体基类"""
 
     def __init__(self, dev, idx, val, param):
-        """Initialize the switch."""
         self._name = dev['name'] + "_" + idx
         self._appkey = param['appkey']
         self._apptoken = param['apptoken']
         self._usertoken = param['usertoken']
         self._userid = param['userid']
-        self._agt = dev['agt']
+        self._agt = dev['agt'].replace("_", "")
         self._me = dev['me']
         self._idx = idx
         self._devtype = dev['devtype']
         attrs = {"agt": self._agt, "me": self._me, "idx": self._idx, "devtype": self._devtype}
         self._attributes = attrs
+        self._device_id = f"{dev['devtype']}_{dev['agt']}_{dev['me']}"
+        self._device_name = dev["name"]
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return the device info."""
+        return DeviceInfo(
+            identifiers={
+                (DOMAIN, self._device_id)
+            },
+            name=self._device_name,
+            manufacturer="LifeSmart",
+            model=self._devtype,
+        )
 
     @property
     def object_id(self):
@@ -661,8 +745,15 @@ class LifeSmartDevice(Entity):
 
     @staticmethod
     def _lifesmart_epset(self, type, val, idx):
-        # self._tick = int(time.time())
-        url = "https://api.ilifesmart.com/app/api.EpSet"
+        """
+        控制单个设备
+        :param self:
+        :param type:
+        :param val:
+        :param idx:
+        :return:
+        """
+        path = "/api.EpSet"
         tick = int(time.time())
         appkey = self._appkey
         apptoken = self._apptoken
@@ -670,9 +761,9 @@ class LifeSmartDevice(Entity):
         usertoken = self._usertoken
         agt = self._agt
         me = self._me
-        sdata = "method:EpSet,agt:" + agt + ",idx:" + idx + ",me:" + me + ",type:" + type + ",val:" + str(
-            val) + ",time:" + str(
-            tick) + ",userid:" + userid + ",usertoken:" + usertoken + ",appkey:" + appkey + ",apptoken:" + apptoken
+        sdata = "method:EpSet,agt:" + agt + ",idx:" + idx + ",me:" + me + ",type:" + type + ",val:" + str(val) + \
+                ",time:" + str(tick) + ",userid:" + userid + ",usertoken:" + usertoken + ",appkey:" + appkey + \
+                ",apptoken:" + apptoken
         sign = hashlib.md5(sdata.encode(encoding='UTF-8')).hexdigest()
         send_values = {
             "id": 1,
@@ -693,17 +784,15 @@ class LifeSmartDevice(Entity):
                 "val": val
             }
         }
-        header = {'Content-Type': 'application/json'}
         send_data = json.dumps(send_values)
-        req = urllib.request.Request(url=url, data=send_data.encode('utf-8'), headers=header, method='POST')
-        response = json.loads(urllib.request.urlopen(req).read().decode('utf-8'))
-        _LOGGER.info("epset_send: %s", str(send_data))
-        _LOGGER.info("epset_res: %s", str(response))
+        response = request_lifesmart(path, send_data)
+        # _LOGGER.warning("epset_send: %s", str(send_data))
+        # _LOGGER.warning("epset_res: %s", str(response))
         return response['code']
 
     @staticmethod
     def _lifesmart_epget(self):
-        url = "https://api.ilifesmart.com/app/api.EpGet"
+        path = "/api.EpGet"
         tick = int(time.time())
         appkey = self._appkey
         apptoken = self._apptoken
@@ -711,8 +800,8 @@ class LifeSmartDevice(Entity):
         usertoken = self._usertoken
         agt = self._agt
         me = self._me
-        sdata = "method:EpGet,agt:" + agt + ",me:" + me + ",time:" + str(
-            tick) + ",userid:" + userid + ",usertoken:" + usertoken + ",appkey:" + appkey + ",apptoken:" + apptoken
+        sdata = "method:EpGet,agt:" + agt + ",me:" + me + ",time:" + str(tick) + ",userid:" + userid + \
+                ",usertoken:" + usertoken + ",appkey:" + appkey + ",apptoken:" + apptoken
         sign = hashlib.md5(sdata.encode(encoding='UTF-8')).hexdigest()
         send_values = {
             "id": 1,
@@ -730,10 +819,8 @@ class LifeSmartDevice(Entity):
                 "me": me
             }
         }
-        header = {'Content-Type': 'application/json'}
         send_data = json.dumps(send_values)
-        req = urllib.request.Request(url=url, data=send_data.encode('utf-8'), headers=header, method='POST')
-        response = json.loads(urllib.request.urlopen(req).read().decode('utf-8'))
+        response = request_lifesmart(path, send_data)
         return response['message']['data']
 
 

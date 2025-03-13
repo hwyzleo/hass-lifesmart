@@ -1,56 +1,62 @@
 import binascii
+import hashlib
+import json
 import logging
 import struct
-import urllib.request
-import json
 import time
-import hashlib
+import urllib.request
+
+import homeassistant.util.color as color_util
 from homeassistant.components.light import (
-    ATTR_BRIGHTNESS,
     ATTR_HS_COLOR,
     ColorMode,
     LightEntity,
     ENTITY_ID_FORMAT,
-    LightEntityFeature,  # 添加这个导入
+    LightEntityFeature,
 )
-import homeassistant.util.color as color_util
 
-from . import LifeSmartDevice
+from . import (
+    DOMAIN,
+    DEVICES,
+    LIGHT_TYPES,
+    SPOT_TYPES,
+    LifeSmartDevice
+)
 
 _LOGGER = logging.getLogger(__name__)
 
-QUANTUM_TYPES = [
-    "OD_WE_QUAN",
-]
 
-SPOT_TYPES = [
-    "MSL_IRCTL",
-    "OD_WE_IRCTL",
-    "SL_SPOT"
-]
+async def async_setup_entry(hass, config_entry, async_add_entities):
+    """通过配置入口设置灯平台"""
+    param = hass.data[DOMAIN][config_entry.entry_id]
+    exclude_items = param["exclude"]
 
+    # 从 Lifesmart 获取设备列表
+    devices = hass.data[DOMAIN][DEVICES]
 
-def setup_platform(hass, config, add_entities, discovery_info=None):
-    if discovery_info is None:
-        return
-    dev = discovery_info.get("dev")
-    param = discovery_info.get("param")
-    devices = []
-    for idx in dev['data']:
-        if idx in ["RGB", "RGBW", "dark", "dark1", "dark2", "dark3", "bright", "bright1", "bright2", "bright"]:
-            devices.append(LifeSmartLight(dev, idx, dev['data'][idx], param))
-    add_entities(devices)
+    # 过滤设备并创建实体
+    lights = []
+    for dev in devices:
+        if dev["me"] in exclude_items:
+            continue
+        devtype = dev["devtype"]
+        if devtype in LIGHT_TYPES:
+            for idx in dev["data"]:
+                if idx in ["RGB", "RGBW", "dark", "dark1", "dark2", "dark3", "bright", "bright1", "bright2", "bright"]:
+                    lights.append(LifeSmartLight(dev, idx, dev["data"][idx], param))
+
+    async_add_entities(lights, True)
 
 
 class LifeSmartLight(LifeSmartDevice, LightEntity):
+    """LifeSmart灯实体"""
 
     def __init__(self, dev, idx, val, param):
-        """Initialize the LifeSmartLight."""
         super().__init__(dev, idx, val, param)
-        self._attr_supported_features = LightEntityFeature.EFFECT  # 替换 supported_features 属性
-
+        self._attr_supported_features = LightEntityFeature.EFFECT
         self.entity_id = ENTITY_ID_FORMAT.format(
             (dev['devtype'] + "_" + dev['agt'] + "_" + dev['me'] + "_" + idx).lower())
+        self._attr_unique_id = self.entity_id
         if val['type'] % 2 == 1:
             self._state = True
         else:

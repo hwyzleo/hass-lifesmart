@@ -1,49 +1,56 @@
 import logging
-# hass 2022.6 changed BinarySensorDevice to BinarySensorEntity
+
 from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     ENTITY_ID_FORMAT,
 )
 
-from . import LifeSmartDevice
+from . import (
+    DOMAIN,
+    DEVICES,
+    BINARY_SENSOR_TYPES,
+    GUARD_SENSOR_TYPES,
+    MOTION_SENSOR_TYPES,
+    LifeSmartDevice
+)
 
 _LOGGER = logging.getLogger(__name__)
 
-GUARD_SENSOR = [
-    "SL_SC_G",
-    "SL_SC_BG"
-]
-MOTION_SENSOR = [
-    "SL_SC_MHW",
-    "SL_SC_BM",
-    "SL_SC_CM"
-]
-SMOKE_SENSOR = [
-    "SL_P_A"
-]
 
+async def async_setup_entry(hass, config_entry, async_add_entities):
+    """通过配置入口设置二进制传感器平台"""
+    param = hass.data[DOMAIN][config_entry.entry_id]
+    exclude_items = param["exclude"]
 
-def setup_platform(hass, config, add_entities, discovery_info=None):
-    if discovery_info is None:
-        return
-    dev = discovery_info.get("dev")
-    param = discovery_info.get("param")
-    devices = []
-    for idx in dev['data']:
-        if idx in ["M", "G", "B", "AXS", "P1"]:
-            devices.append(LifeSmartBinarySensor(dev, idx, dev['data'][idx], param))
-    add_entities(devices)
+    # 从 Lifesmart 获取设备列表
+    devices = hass.data[DOMAIN][DEVICES]
+
+    # 过滤设备并创建实体
+    binary_sensors = []
+    for dev in devices:
+        if dev["me"] in exclude_items:
+            continue
+        devtype = dev["devtype"]
+        if devtype in BINARY_SENSOR_TYPES:
+            for idx in dev['data']:
+                if idx in ["M", "G", "B", "AXS", "P1"]:
+                    binary_sensors.append(LifeSmartBinarySensor(dev, idx, dev['data'][idx], param))
+
+    async_add_entities(binary_sensors, True)
 
 
 class LifeSmartBinarySensor(LifeSmartDevice, BinarySensorEntity):
+    """LifeSmart二进制传感器实体"""
+
     def __init__(self, dev, idx, val, param):
         super().__init__(dev, idx, val, param)
         self.entity_id = ENTITY_ID_FORMAT.format(
             (dev['devtype'] + "_" + dev['agt'] + "_" + dev['me'] + "_" + idx).lower())
+        self._attr_unique_id = self.entity_id
         devtype = dev['devtype']
-        if devtype in GUARD_SENSOR:
+        if devtype in GUARD_SENSOR_TYPES:
             self._device_class = "door"
-        elif devtype in MOTION_SENSOR:
+        elif devtype in MOTION_SENSOR_TYPES:
             self._device_class = "motion"
         else:
             self._device_class = "smoke"

@@ -4,29 +4,36 @@ from homeassistant.components.cover import (
     CoverEntity,
 )
 
-from . import LifeSmartDevice
+from . import (
+    DOMAIN,
+    DEVICES,
+    COVER_TYPES,
+    LifeSmartDevice
+)
 
 
-def setup_platform(hass, config, add_entities, discovery_info=None):
-    """
-    安装窗帘设备
-    :param hass:
-    :param config:
-    :param add_entities:
-    :param discovery_info:
-    :return:
-    """
-    if discovery_info is None:
-        return
-    dev = discovery_info.get("dev")
-    param = discovery_info.get("param")
-    devices = []
-    if dev["devtype"] == "SL_SW_WIN":
-        idx = "OP"
-    else:
-        idx = "P1"
-    devices.append(LifeSmartCover(dev, idx, dev['data'][idx], param))
-    add_entities(devices)
+async def async_setup_entry(hass, config_entry, async_add_entities):
+    """通过配置入口设置窗帘平台"""
+    param = hass.data[DOMAIN][config_entry.entry_id]
+    exclude_items = param["exclude"]
+
+    # 从 Lifesmart 获取设备列表
+    devices = hass.data[DOMAIN][DEVICES]
+
+    # 过滤设备并创建实体
+    covers = []
+    for dev in devices:
+        if dev["me"] in exclude_items:
+            continue
+        devtype = dev["devtype"]
+        if devtype in COVER_TYPES:
+            if dev["devtype"] == "SL_SW_WIN":
+                idx = "OP"
+            else:
+                idx = "P1"
+            covers.append(LifeSmartCover(dev, idx, dev["data"][idx], param))
+
+    async_add_entities(covers, True)
 
 
 class LifeSmartCover(LifeSmartDevice, CoverEntity):
@@ -36,6 +43,7 @@ class LifeSmartCover(LifeSmartDevice, CoverEntity):
         super().__init__(dev, idx, val, param)
         self._name = dev['name']
         self.entity_id = ENTITY_ID_FORMAT.format((dev['devtype'] + "_" + dev['agt'] + "_" + dev['me']).lower())
+        self._attr_unique_id = self.entity_id
         self._pos = val['val']
         self._device_class = "curtain"
         self._devtype = dev["devtype"]

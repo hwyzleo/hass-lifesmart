@@ -1,49 +1,55 @@
 import logging
 
+from homeassistant.components.sensor import (
+    SensorEntity,
+    ENTITY_ID_FORMAT,
+)
 from homeassistant.const import UnitOfTemperature
 
-DOMAIN = "sensor"
-ENTITY_ID_FORMAT = DOMAIN + ".{}"
-
-from . import LifeSmartDevice
+from . import (
+    DOMAIN,
+    DEVICES,
+    BINARY_SENSOR_TYPES,
+    GAS_SENSOR_TYPES,
+    OT_SENSOR_TYPES,
+    LifeSmartDevice
+)
 
 _LOGGER = logging.getLogger(__name__)
 
-GAS_SENSOR_TYPES = [
-    "SL_SC_WA ",
-    "SL_SC_CH",
-    "SL_SC_CP",
-    "ELIQ_EM"
-]
 
-OT_SENSOR_TYPES = [
-    "SL_SC_MHW",
-    "SL_SC_BM",
-    "SL_SC_G",
-    "SL_SC_BG"
-]
+async def async_setup_entry(hass, config_entry, async_add_entities):
+    """通过配置入口设置传感器平台"""
+    param = hass.data[DOMAIN][config_entry.entry_id]
+    exclude_items = param["exclude"]
 
+    # 从 Lifesmart 获取设备列表
+    devices = hass.data[DOMAIN][DEVICES]
 
-def setup_platform(hass, config, add_entities, discovery_info=None):
-    devices = []
-    dev = discovery_info.get("dev")
-    param = discovery_info.get("param")
-    devices = []
-    for idx in dev['data']:
-        if dev['devtype'] in OT_SENSOR_TYPES and idx in ["Z", "V", "P3", "P4"]:
-            devices.append(LifeSmartSensor(dev, idx, dev['data'][idx], param))
-        else:
-            devices.append(LifeSmartSensor(dev, idx, dev['data'][idx], param))
-    add_entities(devices)
+    # 过滤设备并创建实体
+    sensors = []
+    for dev in devices:
+        if dev["me"] in exclude_items:
+            continue
+        devtype = dev["devtype"]
+        if devtype in BINARY_SENSOR_TYPES:
+            for idx in dev["data"]:
+                if dev['devtype'] in OT_SENSOR_TYPES and idx in ["Z", "V", "P3", "P4"]:
+                    sensors.append(LifeSmartSensor(dev, idx, dev['data'][idx], param))
+                else:
+                    sensors.append(LifeSmartSensor(dev, idx, dev['data'][idx], param))
+
+    async_add_entities(sensors, True)
 
 
-class LifeSmartSensor(LifeSmartDevice):
+class LifeSmartSensor(LifeSmartDevice, SensorEntity):
+    """LifeSmart传感器实体"""
 
     def __init__(self, dev, idx, val, param):
-        """Initialize the LifeSmartSensor."""
         super().__init__(dev, idx, val, param)
         self.entity_id = ENTITY_ID_FORMAT.format(
             (dev['devtype'] + "_" + dev['agt'] + "_" + dev['me'] + "_" + idx).lower())
+        self._attr_unique_id = self.entity_id
         devtype = dev['devtype']
         if devtype in GAS_SENSOR_TYPES:
             self._unit = "None"
